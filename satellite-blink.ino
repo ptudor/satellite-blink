@@ -52,13 +52,15 @@ Enjoy,
 //                     GND  4|    |5   PB0  (D  0)        pwm0
 //                           +----+
 
-#define PABY_VERSION "PA6H Monitor v1.0"
+#define PABY_VERSION "PA6H Monitor v1.1"
 #define PABY_COPYRIGHT "(c) Patrick Tudor"
 
-// this is the loop interval in milliseconds. LED will blink approximately this often.
-// unsigned int so please don't exceed around 60,000, or change to long below.
-#define INTERVAL 16000
-// if the Oscillator has been calibrated, this pulls OSCCAL from EEPROM
+// sleep for this many seconds. less than 255 please.
+#define SLEEP_INTERVAL 25
+// this is the time after sleep spent reading NMEA in milliseconds.
+// unsigned int so please don't exceed around 60,000, or change to long below. 3<N<10 seconds is okay.
+#define NMEA_INTERVAL 5000
+// if the Oscillator has been calibrated, set this true to pull OSCCAL from EEPROM
 #define ATTINY_CALIBRATED 1
 // if using the MKT3339/PA6H chipset, set to one.
 #define GPS_PA6H 1
@@ -75,7 +77,9 @@ Enjoy,
 #include <EEPROM.h>
 #include <SoftwareSerial.h>
 #include <TinyGPS++.h>
-#include <avr/wdt.h> // watchdog timer
+#include <avr/power.h>  // power utilities
+#include <avr/wdt.h>    // watchdog timer
+#include <avr/sleep.h>  // sleep_mode
 #endif
 
 // make a gps object
@@ -95,8 +99,8 @@ TinyGPSCustom antenna(gps, "PGTOP", 2); // $PGTOP sentence, 2nd element
 #define PA6H_BAUD_4800 "$PMTK251,4800*14"
 #define PA6H_BAUD_9600 "$PMTK251,9600*17"
 
-//static const uint16_t GPS96 = 9600;
-//static const uint16_t GPS48 = 4800;
+static const uint16_t GPS96 = 9600;
+static const uint16_t GPS48 = 4800;
 //static const uint32_t GPSBaud = 4800;
 
 #if PCB_A
@@ -108,29 +112,29 @@ static const byte statusLED = 2;
 #endif
 
 // a counter for void loop(). Uses int instead of long to save 2 bytes.
-unsigned int loop_counter;
+uint16_t loop_counter;
+byte watchdog_counter;
+
+// watchdog interrupt
+ISR(WDT_vect) {
+  // increment counter once per second
+  watchdog_counter++;
+}
 
 // take a count, like 4, and a millsecond time, like 1000, and blink the LED.
 void blinkDelay(byte count, int timecount) {
   for (int x = 0 ; x < count ; x++)
   {
-    // reset the watchdog timer throughout just in case these are Long Delays.
-    wdt_reset();
     // LED on,
     digitalWrite(statusLED, HIGH);
     delay(timecount);
-    wdt_reset();
     // LED off,
     digitalWrite(statusLED, LOW);
     delay(timecount);
-    wdt_reset();
   }
-  //digitalWrite(statusLED, LOW);
 }
 
 void setup() {
-  // eight second watchdog timer
-  wdt_enable(WDTO_8S);
 
   // Use TinyTuner "Save_to_EEPROM" first to tune Oscillator
 #if ATTINY_CALIBRATED
@@ -146,14 +150,14 @@ void setup() {
   blinkDelay(6, 50);
 
   // begin serial at 9600 default to set 4800
-  ss.begin(9600);
+  ss.begin(GPS96);
 #if GPS_PA6H
   ss.println(PA6H_BAUD_4800);
 #endif
   ss.end();
 
   // begin serial at 4800
-  ss.begin(4800);
+  ss.begin(GPS48);
 
   // push custom message interval list
 #if GPS_PA6H
@@ -173,103 +177,134 @@ void setup() {
 #endif
 
   // give the first run a headstart
-  loop_counter = INTERVAL - 4000;
+  watchdog_counter = SLEEP_INTERVAL;
+
+  // conserve energy
+  power_adc_disable();
+  power_usi_disable();
+  set_sleep_mode(SLEEP_MODE_PWR_DOWN); //Power down everything, wake up from WDT
+  sleep_enable();
+  setup_watchdog(6); //Setup watchdog to go off after 1sec
 
 }
 
 void loop() {
 
-  // read NMEA into gps object
-  gps.encode(ss.read());
-
-  // increment counter toward INTERVAL
-  loop_counter++;
-  // slow it down just a little tiny bit
-  delay(1);
-
-  // when we cross the threshold, update LED status
-  if (loop_counter > INTERVAL)  {
-    // first let's reset the counter
-    loop_counter = 0;
-    // notify user an update is arriving with a quick quarter-second blink
-    blinkDelay(4, 60);
-    // and pause for a second
-    delay(1000);
-
-    // let's make sure first that we have fresh data
-    uint32_t fixage;
-    fixage = gps.satellites.age();
-
-    // average is in the range 1000-3000. 10 seconds is too long. "no data" is -1 unsigned or 4B.
-    if (fixage > 10000) {
-#if DEBUG
-      ss.print(F("age:"));
-      ss.println(fixage);
-#endif
-      // no data, solid LED for four seconds.
-      blinkDelay(1, 4000);
-      // probably temporary, try again in five seconds.
-      loop_counter = INTERVAL - 5000;
-    } else {
-      // good data, let's count the satellites.
-      int satellitesInView;
-      satellitesInView = gps.satellites.value();
-#if DEBUG
-      ss.print(gps.charsProcessed());
-      ss.print(F(","));
-      ss.print(fixage);
-      ss.print(F(","));
-      ss.println(satellitesInView);
-#endif
-      // true even with zero satellites, as in, true with NMEA sentences coming in
-      if (gps.location.isValid()) {
-
-        // if there are zero or one satellites, two second blink.
-        if ( satellitesInView <= 1 ) {
-
-#if DEBUG
-          ss.println(F("s0|1"));
-#endif
-          blinkDelay(1, 2000);
-
-          // normal condition. Blink on/off for each satellite in view
-        } else if ( satellitesInView > 1 ) {
-#if DEBUG
-          ss.println(F("s > 1"));
-#endif
-          blinkDelay(satellitesInView, 500);
-
-          // this is an unexpected problem. Blink four times, two seconds each.
-        } else {
-#if DEBUG
-          ss.println(F("!s"));
-#endif
-          blinkDelay(4, 2000);
-
-        }
-
-        // antenna check. useful but causes RAM problems so don't use it
-#if ANTENNA
-        byte antennaStatus = 3;
-        antennaStatus = atoi(antenna.value());
-        if (antennaStatus == 3) { // three means antenna detected
-          delay(300);
-          blinkDelay(10, 10);
-        }
-#endif
-
-        // no NMEA is a problem. Blink five times in a second.
-      } else {
-        blinkDelay(5, 100);
-      } // end isvalid
-    } //end fixage
-
-    // Force LED off. Shouldn't be required, but...
-    digitalWrite(statusLED, LOW);
+  sleep_mode(); // sleep until interrupt that increments counter
+  if (watchdog_counter > SLEEP_INTERVAL) {
+    nmea_read();
+    watchdog_counter = 0;
   }
 
-  // reset the watchdog timer
-  wdt_reset();
+}
+
+void nmea_read() {
+  // quick blink when we woke up
+  blinkDelay(1, 100);
+
+  while (loop_counter < NMEA_INTERVAL) {
+    // read NMEA into gps object
+    gps.encode(ss.read());
+
+    // increment counter toward NMEA_INTERVAL
+    loop_counter++;
+    // slow it down just a little tiny bit
+    delay(1);
+  }
+
+  // when we cross the threshold, update LED status
+  // let's reset the counter
+  loop_counter = 0;
+  // notify user an update is arriving with a quick quarter-second blink
+  blinkDelay(4, 60);
+  // and pause for a second
+  delay(1000);
+
+  // let's make sure that we have fresh data
+  uint32_t fixage;
+  fixage = gps.satellites.age();
+
+  // average is in the range 1000-3000. 10 seconds is too long. "no data" is -1 unsigned or 4B.
+  if (fixage > 10000) {
+#if DEBUG
+    ss.print(F("age:"));
+    ss.println(fixage);
+#endif
+    // no data, solid LED for four seconds.
+    blinkDelay(1, 4000);
+  } else {
+    // good data, let's count the satellites.
+    int satellitesInView;
+    satellitesInView = gps.satellites.value();
+#if DEBUG
+    ss.print(gps.charsProcessed());
+    ss.print(F(","));
+    ss.print(fixage);
+    ss.print(F(","));
+    ss.println(satellitesInView);
+#endif
+    // true even with zero satellites, as in, true with NMEA sentences coming in
+    if (gps.location.isValid()) {
+
+      // if there are zero or one satellites, two second blink.
+      if ( satellitesInView <= 1 ) {
+#if DEBUG
+        ss.println(F("s0|1"));
+#endif
+        blinkDelay(1, 2000);
+
+        // normal condition. Blink on/off for each satellite in view
+      } else if ( satellitesInView > 1 ) {
+#if DEBUG
+        ss.println(F("s > 1"));
+#endif
+        blinkDelay(satellitesInView, 500);
+
+        // this is an unexpected problem. Blink four times, two seconds each.
+      } else {
+#if DEBUG
+        ss.println(F("!s"));
+#endif
+        blinkDelay(4, 2000);
+
+      }
+
+      // antenna check. useful but causes RAM problems so don't use it
+#if ANTENNA
+      byte antennaStatus = 3;
+      antennaStatus = atoi(antenna.value());
+      if (antennaStatus == 3) { // three means antenna detected
+        delay(300);
+        blinkDelay(10, 10);
+      }
+#endif
+
+      // no NMEA is a problem. Blink five times in a second.
+    } else {
+      blinkDelay(5, 100);
+    } // end isvalid
+  } //end fixage
+
+  // Force LED off. Shouldn't be required, but...
+  digitalWrite(statusLED, LOW);
+  //  }
+
 } //end loop
 
+//Sets the watchdog timer to wake us up, but not reset
+//0=16ms, 1=32ms, 2=64ms, 3=128ms, 4=250ms, 5=500ms
+//6=1sec, 7=2sec, 8=4sec, 9=8sec
+//From: http://interface.khm.de/index.php/lab/experiments/sleep_watchdog_battery/
+void setup_watchdog(int timerPrescaler) {
 
+  if (timerPrescaler > 9 ) timerPrescaler = 9; //Limit incoming amount to legal settings
+
+  byte bb = timerPrescaler & 7;
+  if (timerPrescaler > 7) bb |= (1 << 5); //Set the special 5th bit if necessary
+
+  //This order of commands is important and cannot be combined
+  MCUSR &= ~(1 << WDRF); //Clear the watch dog reset
+  WDTCR |= (1 << WDCE) | (1 << WDE); //Set WD_change enable, set WD enable
+  WDTCR = bb; //Set new watchdog timeout value
+  WDTCR |= _BV(WDIE); //Set the interrupt enable, this will keep unit from resetting after each int
+}
