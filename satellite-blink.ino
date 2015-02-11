@@ -111,7 +111,7 @@ SoftwareSerial ss(RXPin, TXPin);
 static const byte statusLED = 2;
 #endif
 
-// a counter for void loop(). Uses int instead of long to save 2 bytes.
+// a counter for nmea_read() duration between sleeps.
 uint16_t loop_counter;
 byte watchdog_counter;
 
@@ -136,8 +136,8 @@ void blinkDelay(byte count, int timecount) {
 
 void setup() {
 
-  // Use TinyTuner "Save_to_EEPROM" first to tune Oscillator
 #if ATTINY_CALIBRATED
+  // Use TinyTuner "Save_to_EEPROM" first to tune Oscillator
   OSCCAL =  EEPROM.read(0), HEX;
 #endif
 
