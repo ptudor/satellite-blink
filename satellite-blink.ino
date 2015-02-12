@@ -93,7 +93,7 @@ TinyGPSCustom antenna(gps, "PGTOP", 2); // $PGTOP sentence, 2nd element
 #endif
 
 // http://www.hhhh.org/wiml/proj/nmeaxor.html
-// " The checksum is simple, just an XOR of all the bytes between the $ and the * (not including the delimiters themselves), and written in hexadecimal."
+// "The checksum is simple, just an XOR of all the bytes between the $ and the * (not including the delimiters themselves), and written in hexadecimal."
 #define PA6H_MESSAGES_DEFAULT "$PMTK314,-1*04"
 #define PA6H_MESSAGES "$PMTK314,3,1,3,1,2,6,0,0,0,0,0,0,0,0,0,0,0,0,0*2C"
 #define PA6H_BAUD_4800 "$PMTK251,4800*14"
@@ -105,7 +105,7 @@ static const uint16_t GPS48 = 4800;
 
 #if PCB_A
 // The serial connection to the GPS device
-static const byte RXPin = 4, TXPin = 3;
+static const byte RXPin = 3, TXPin = 4;
 SoftwareSerial ss(RXPin, TXPin);
 // the LED pin
 static const byte statusLED = 2;
