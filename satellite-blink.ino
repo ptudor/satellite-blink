@@ -64,6 +64,8 @@ Enjoy,
 #define ATTINY_CALIBRATED 1
 // if using the MKT3339/PA6H chipset, set to one.
 #define GPS_PA6H 1
+// this should change 9600 to 4800 but I suggest just using 9600
+#define GPS_PA6H_PREFER_4800 0
 // if parsing sentences to check for antenna, set to one. Please don't do that yet.
 #define ANTENNA 0
 // debug mode pushes simple data out the transmit pin
@@ -95,6 +97,33 @@ TinyGPSCustom antenna(gps, "PGTOP", 2); // $PGTOP sentence, 2nd element
 // http://www.hhhh.org/wiml/proj/nmeaxor.html
 // "The checksum is simple, just an XOR of all the bytes between the $ and the * (not including the delimiters themselves), and written in hexadecimal."
 #define PA6H_MESSAGES_DEFAULT "$PMTK314,-1*04"
+/* 
+
+GPGLL: only lat and long. No course, no speed, no counters.
+"Contains just position and time"
+
+GPRMC: Recommended minimum specific GPS/Transit data: lat/long, speed over ground, course made good, variation
+"Contains the minimum data of time, position, speed and course"
+
+GPVTG: course over ground, in degrees, true north, speed in knots and Km
+"Contains the course and speed over the ground"
+
+GPGGA: time,latitude,hemisphere,longitude,hemisphere,fix,satellitecount,hdop,alt,msl,dgpstime,dgpsstation
+"Contains the essential fix data which provide location and accuracy"
+
+GPGSA: list of active satellites, twelve per line
+"Contains data on the Dilution of Precision (DOP) and which satellites are used"
+
+GPGSV: satview, four per line: lines,line,total,id,ele,azi,strength,repeat,repeat,repeat
+"Contains the satellite location relative to the receiver and its signal
+ to noise ratio. Each message can describe 4 satellites so multiple messages
+ may be output depending on the number of satellites being tracked."
+
+GPGRS, GPGST: 
+*/
+
+// order: GLL, RMC, VTG, GGA, GSA, GSV, GRS, GST
+// byonics default: "NMEA sentences sent each second: $GPGSA, $GPRMC, $GPGGA, $GPGSV."
 #define PA6H_MESSAGES "$PMTK314,3,1,3,1,2,6,0,0,0,0,0,0,0,0,0,0,0,0,0*2C"
 #define PA6H_BAUD_4800 "$PMTK251,4800*14"
 #define PA6H_BAUD_9600 "$PMTK251,9600*17"
@@ -148,16 +177,19 @@ void setup() {
   pinMode(TXPin, OUTPUT);
   // give a "power on" blink, six times with 50ms delay
   blinkDelay(6, 50);
-
+  
+  // just another delay to let the GPS boot up
+  delay(400);
+  
   // begin serial at 9600 default to set 4800
   ss.begin(GPS96);
-#if GPS_PA6H
+#if GPS_PA6H_PREFER_4800
+  blinkDelay(4, 75);
   ss.println(PA6H_BAUD_4800);
-#endif
   ss.end();
-
   // begin serial at 4800
   ss.begin(GPS48);
+#endif
 
   // push custom message interval list
 #if GPS_PA6H
@@ -170,7 +202,7 @@ void setup() {
   ss.println(PA6H_ANTENNA_STATUS);  //softwareserial
 #endif
 
-  // print the OSCCAL value. Probably around 80.
+  // print the OSCCAL value. Probably around 0x80.
 #if DEBUG
   ss.print(F("OSCCAL:"));
   ss.println(EEPROM.read( 0 ), HEX);
@@ -199,7 +231,7 @@ void loop() {
 }
 
 void nmea_read() {
-  // quick blink when we woke up
+  // quick blink when we wake up
   blinkDelay(1, 100);
 
   while (loop_counter < NMEA_INTERVAL) {
@@ -260,7 +292,7 @@ void nmea_read() {
 #endif
         blinkDelay(satellitesInView, 500);
 
-        // this is an unexpected problem. Blink four times, two seconds each.
+        // this is an unexpected problem. Blink four times, two seconds each.w
       } else {
 #if DEBUG
         ss.println(F("!s"));
