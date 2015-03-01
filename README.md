@@ -1,6 +1,8 @@
 # satellite-blink
 ATTiny85 code to blink the count of GNSS satellites in view from a NMEA stream
 
+Used in my [PA6H GPS](https://www.tindie.com/products/ptudor/pa6h-gps-for-tinytrak-and-microtrak/) for APRS available on Tindie.
+
 Requires TinyGPS++ Library.
 
 ### TinyGPS++
