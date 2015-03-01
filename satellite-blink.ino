@@ -11,9 +11,9 @@ for the default GPS puck from Byonics for the MicroTrak RTG and similar.
 The code does two things:
 
 1) Connect to the GPS at 9600 default and drop it to 4800 before
-   updating the list of NMEA sentences to output, and
+   updating the list of NMEA sentences to output, (configurable; non-default)
 
-2) Parse the NMEA stream and once a minute or so blink an LED with
+2) Parse the NMEA stream and twice a minute or so blink an LED with
    a count of the satellites in view so you know the GPS is working.
 
 The PCB works like this:
@@ -31,28 +31,17 @@ Enjoy,
 
 */
 
-//
-// ATTiny85
-// Where ISP is red-orange-yellow-green-blue-violet
-// 1: RST blue
-// 2: three
-// 3: four
-// 4: GND violet
-// 5: zero / MOSI green
-// 6: one / MISO red
-// 7: two / SCK yellow
-// 8: VCC orange
 
 // ATMEL ATTINY45 / ARDUINO
 //
 //                           +-\/-+
-//  Ain0       (D  5)  PB5  1|    |8   VCC
-//  Ain3       (D  3)  PB3  2|    |7   PB2  (D  2)  INT0  Ain1
-//  Ain2       (D  4)  PB4  3|    |6   PB1  (D  1)        pwm1
-//                     GND  4|    |5   PB0  (D  0)        pwm0
+//  Ain0  RST  (D  5)  PB5  1|    |8   VCC
+//  Ain3       (D  3)  PB3  2|    |7   PB2  (D  2)  INT0  Ain1   SCK
+//  Ain2       (D  4)  PB4  3|    |6   PB1  (D  1)        pwm1   MISO
+//                     GND  4|    |5   PB0  (D  0)        pwm0   MOSI
 //                           +----+
 
-#define PABY_VERSION "PA6H Monitor v1.1"
+#define PABY_VERSION "PA6H Monitor v1.2"
 #define PABY_COPYRIGHT "(c) Patrick Tudor"
 
 // sleep for this many seconds. less than 255 please.
@@ -61,8 +50,9 @@ Enjoy,
 // unsigned int so please don't exceed around 60,000, or change to long below. 3<N<10 seconds is okay.
 #define NMEA_INTERVAL 5000
 // if the Oscillator has been calibrated, set this true to pull OSCCAL from EEPROM
+// Because of SoftwareSerial, this is pretty much required. But values vary widely.
 #define ATTINY_CALIBRATED 1
-// if using the MKT3339/PA6H chipset, set to one.
+// if using the MTK3339/PA6H chipset, set to one.
 #define GPS_PA6H 1
 // this should change 9600 to 4800 but I suggest just using 9600
 #define GPS_PA6H_PREFER_4800 0
@@ -142,7 +132,7 @@ static const byte statusLED = 2;
 
 // a counter for nmea_read() duration between sleeps.
 uint16_t loop_counter;
-byte watchdog_counter;
+volatile byte watchdog_counter;
 
 // watchdog interrupt
 ISR(WDT_vect) {
@@ -166,9 +156,18 @@ void blinkDelay(byte count, int timecount) {
 void setup() {
 
 #if ATTINY_CALIBRATED
+  // decimal. in range 140 to 190.
+  byte calibrationValue = 165; // 157, 149, 166, 155, 185, 183, 182, 157, 156, 170, 165
+  // wrapped in if so I can upload code once without doing a write Every Single Time
+  if (EEPROM.read(0) != calibrationValue) {
+     EEPROM.write(0, calibrationValue);
+  }
   // Use TinyTuner "Save_to_EEPROM" first to tune Oscillator
   OSCCAL =  EEPROM.read(0), HEX;
 #endif
+
+  // begin serial at 9600 default to set 4800
+  ss.begin(GPS96);
 
   // set pin modes
   pinMode(statusLED, OUTPUT);
@@ -181,8 +180,6 @@ void setup() {
   // just another delay to let the GPS boot up
   delay(400);
   
-  // begin serial at 9600 default to set 4800
-  ss.begin(GPS96);
 #if GPS_PA6H_PREFER_4800
   blinkDelay(4, 75);
   ss.println(PA6H_BAUD_4800);
@@ -263,6 +260,7 @@ void nmea_read() {
     ss.println(fixage);
 #endif
     // no data, solid LED for four seconds.
+    // the most likely cause for this is an untuned oscillator.
     blinkDelay(1, 4000);
   } else {
     // good data, let's count the satellites.
@@ -292,7 +290,7 @@ void nmea_read() {
 #endif
         blinkDelay(satellitesInView, 500);
 
-        // this is an unexpected problem. Blink four times, two seconds each.w
+        // this is an unexpected problem. Blink four times, two seconds each.
       } else {
 #if DEBUG
         ss.println(F("!s"));
