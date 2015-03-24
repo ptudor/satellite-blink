@@ -41,7 +41,7 @@ Enjoy,
 //                     GND  4|    |5   PB0  (D  0)        pwm0   MOSI
 //                           +----+
 
-#define PABY_VERSION "PA6H Monitor v1.2"
+#define PABY_VERSION "PA6H Monitor v1.3"
 #define PABY_COPYRIGHT "(c) Patrick Tudor"
 
 // sleep for this many seconds. less than 255 please.
@@ -83,6 +83,12 @@ TinyGPSPlus gps;
 #if ANTENNA
 TinyGPSCustom antenna(gps, "PGTOP", 2); // $PGTOP sentence, 2nd element
 #endif
+
+// enables SBAS search with PMTK_API_SET_SBAS_ENABLED, 0 off 1 on
+#define PA6H_SBAS_ENABLE "$PMTK313,1*2E" 
+// enables FAA WAAS with PMTK_API_SET_DGPS_MODE, 0 off, 1 RTCM, 2 WAAS
+#define PA6H_WAAS_ENABLE "$PMTK301,2*2E" 
+
 
 // http://www.hhhh.org/wiml/proj/nmeaxor.html
 // "The checksum is simple, just an XOR of all the bytes between the $ and the * (not including the delimiters themselves), and written in hexadecimal."
@@ -157,10 +163,10 @@ void setup() {
 
 #if ATTINY_CALIBRATED
   // decimal. in range 140 to 190.
-  byte calibrationValue = 165; // 157, 149, 166, 155, 185, 183, 182, 157, 156, 170, 165
+  byte calibrationValue = 157; // 157, 149, 166, 155, 185, 183, 182, 157, 156, 170, 165, 150
   // wrapped in if so I can upload code once without doing a write Every Single Time
   if (EEPROM.read(0) != calibrationValue) {
-     EEPROM.write(0, calibrationValue);
+    EEPROM.write(0, calibrationValue);
   }
   // Use TinyTuner "Save_to_EEPROM" first to tune Oscillator
   OSCCAL =  EEPROM.read(0), HEX;
@@ -192,6 +198,11 @@ void setup() {
 #if GPS_PA6H
   //ss.println(PA6H_MESSAGES_DEFAULT);
   ss.println(PA6H_MESSAGES);
+  delay(50);
+  ss.println(PA6H_SBAS_ENABLE);
+  delay(50);
+  ss.println(PA6H_WAAS_ENABLE);
+  delay(50);
 #endif
 
   // uses too much RAM. Don't enable.
